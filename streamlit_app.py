@@ -116,7 +116,7 @@ with tab_fotos:
     st.subheader("Subir fotos")
     st.caption(
         "Requiere un bucket de Storage llamado 'fotos' en tu proyecto de Supabase, "
-        "marcado como público (ver README)."
+        "marcado como público, y la tabla 'fotos_galeria' (ver README)."
     )
 
     categoria = st.selectbox("¿Para qué sección es esta foto?", [
@@ -129,10 +129,11 @@ with tab_fotos:
         try:
             supabase.storage.from_("fotos").upload(nombre_archivo, archivo.getvalue())
             url = supabase.storage.from_("fotos").get_public_url(nombre_archivo)
-            st.success("Foto subida correctamente.")
+            supabase.table("fotos_galeria").insert({
+                "categoria": categoria, "url": url, "ruta_storage": nombre_archivo
+            }).execute()
+            st.success("Foto subida — ya debería aparecer en tu sitio web.")
             st.image(url, width=320)
-            st.code(url, language="text")
-            st.caption("Copia este link si quieres usarlo directo en el index.html.")
         except Exception as e:
             st.error(f"No se pudo subir la foto: {e}")
 
@@ -150,9 +151,31 @@ with tab_fotos:
                     st.image(url, use_container_width=True)
                     if st.button("🗑️ Eliminar", key=ruta):
                         supabase.storage.from_("fotos").remove([ruta])
+                        supabase.table("fotos_galeria").delete().eq("ruta_storage", ruta).execute()
                         st.rerun()
     except Exception as e:
         st.warning(f"No se pudo listar las fotos: {e}")
+
+    st.divider()
+    st.caption(
+        "¿Subiste fotos ANTES de tener esta pestaña actualizada y no te aparecen "
+        "en el sitio? Dale clic aquí para ponerlas al día."
+    )
+    if st.button("🔄 Sincronizar fotos existentes con el sitio web"):
+        try:
+            archivos_sync = supabase.storage.from_("fotos").list(categoria)
+            total = 0
+            for f in archivos_sync:
+                ruta = f"{categoria}/{f['name']}"
+                url = supabase.storage.from_("fotos").get_public_url(ruta)
+                supabase.table("fotos_galeria").upsert(
+                    {"categoria": categoria, "url": url, "ruta_storage": ruta},
+                    on_conflict="ruta_storage"
+                ).execute()
+                total += 1
+            st.success(f"Listo — {total} foto(s) de '{categoria}' sincronizadas.")
+        except Exception as e:
+            st.error(f"No se pudo sincronizar: {e}")
 
 # ============================================================
 # TAB 4: TARIFAS
@@ -197,3 +220,4 @@ with tab_tarifas:
                 supabase.table("precios").upsert({"clave": clave, "valor": valor}).execute()
             st.success("Tarifas actualizadas. Tu sitio ya las va a usar la próxima vez que alguien lo cargue.")
             st.rerun()
+
