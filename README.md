@@ -15,6 +15,9 @@ necesita pasar por Streamlit.
 2. Crea un **New project**. Elige una contraseña de base de datos y guárdala.
 3. Ve a **SQL Editor > New query**, pega todo el contenido de `supabase_schema.sql`
    de esta carpeta, y dale **Run**. Esto crea las tablas `reservas` y `bloqueos`.
+3.1. Haz lo mismo con `supabase_schema_precios.sql` (en una consulta nueva) — esto
+     crea la tabla `precios`, que es la que te deja cambiar tarifas desde el panel
+     sin tocar código.
 4. Ve a **Storage** y crea un bucket llamado `fotos`, márcalo como **Public bucket**.
 5. Ve a **Project Settings > API**. Ahí vas a ver dos claves:
    - **`anon` `public`** → esta es la que va a ir *dentro de tu `index.html`* (es segura de exponer, solo permite insertar reservas y leer bloqueos, según las reglas del SQL).
