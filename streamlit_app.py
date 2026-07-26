@@ -33,8 +33,8 @@ if not st.session_state.autenticado:
     st.stop()
 
 st.title("🏝️ MitaToya — Panel de administración")
-tab_reservas, tab_disponibilidad, tab_fotos = st.tabs(
-    ["📋 Reservas", "📅 Disponibilidad", "🖼️ Fotos"]
+tab_reservas, tab_disponibilidad, tab_fotos, tab_tarifas = st.tabs(
+    ["📋 Reservas", "📅 Disponibilidad", "🖼️ Fotos", "💲 Tarifas"]
 )
 
 # ============================================================
@@ -153,3 +153,47 @@ with tab_fotos:
                         st.rerun()
     except Exception as e:
         st.warning(f"No se pudo listar las fotos: {e}")
+
+# ============================================================
+# TAB 4: TARIFAS
+# ============================================================
+with tab_tarifas:
+    st.subheader("Precios y condiciones de reserva")
+    st.caption(
+        "Estos son los valores que tu sitio web usa para calcular el total y el "
+        "depósito. Cambia lo que necesites y dale 'Guardar cambios' — se actualiza "
+        "en tu sitio al instante, sin tocar código."
+    )
+
+    ETIQUETAS = {
+        "traslado": "Traslado privado (USD, precio fijo por viaje)",
+        "tour": "Tour guiado (USD, por persona)",
+        "grupo": "Transporte para grupos (USD, tarifa base)",
+        "renta": "Renta de carro (USD, por día)",
+        "hospedaje_triple": "Habitación Triple (USD, por noche)",
+        "hospedaje_doble": "Habitación Doble (USD, por noche)",
+        "deposito_porcentaje": "Porcentaje de depósito (%)",
+        "tipo_cambio": "Tipo de cambio (córdobas por 1 USD)",
+    }
+
+    precios_data = supabase.table("precios").select("*").execute()
+    precios_actuales = {p["clave"]: p["valor"] for p in precios_data.data}
+
+    if not precios_actuales:
+        st.warning(
+            "No encontré la tabla de precios. Corre el archivo "
+            "`supabase_schema_precios.sql` en el SQL Editor de Supabase primero."
+        )
+    else:
+        nuevos_valores = {}
+        for clave, etiqueta in ETIQUETAS.items():
+            valor_actual = precios_actuales.get(clave, 0)
+            nuevos_valores[clave] = st.number_input(
+                etiqueta, min_value=0.0, value=float(valor_actual), step=0.5, key=f"precio_{clave}"
+            )
+
+        if st.button("💾 Guardar cambios", use_container_width=True):
+            for clave, valor in nuevos_valores.items():
+                supabase.table("precios").upsert({"clave": clave, "valor": valor}).execute()
+            st.success("Tarifas actualizadas. Tu sitio ya las va a usar la próxima vez que alguien lo cargue.")
+            st.rerun()
