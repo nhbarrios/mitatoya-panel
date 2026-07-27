@@ -1,6 +1,6 @@
 import streamlit as st
 from supabase import create_client
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 import pandas as pd
 
 st.set_page_config(page_title="MitaToya · Panel de administración", page_icon="🏝️", layout="wide")
@@ -68,6 +68,66 @@ with tab_reservas:
 # TAB 2: DISPONIBILIDAD (calendario de bloqueos)
 # ============================================================
 with tab_disponibilidad:
+    st.subheader("📅 Vista de calendario")
+    st.caption("De un vistazo: qué está libre, reservado o bloqueado por cada servicio.")
+
+    RECURSOS = [
+        {"etiqueta": "🚗 Renta de carro", "servicio": "renta", "habitacion": None},
+        {"etiqueta": "🛏️ Habitación Triple", "servicio": "hospedaje", "habitacion": "triple"},
+        {"etiqueta": "🛏️ Habitación Doble", "servicio": "hospedaje", "habitacion": "doble"},
+    ]
+
+    col_cal1, col_cal2 = st.columns(2)
+    cal_desde = col_cal1.date_input("Ver desde", value=date.today(), key="cal_desde")
+    cal_dias = col_cal2.slider("Cuántos días mostrar", min_value=7, max_value=30, value=14, key="cal_dias")
+    cal_hasta = cal_desde + timedelta(days=cal_dias - 1)
+
+    rango_fechas = [cal_desde + timedelta(days=i) for i in range(cal_dias)]
+    columnas_fecha = [f.strftime("%a %d/%m") for f in rango_fechas]
+    mapa_columna_fecha = dict(zip(columnas_fecha, rango_fechas))
+
+    df_cal = pd.DataFrame("🟢 Libre", index=[r["etiqueta"] for r in RECURSOS], columns=columnas_fecha)
+
+    # Bloqueos manuales
+    bloqueos_cal = supabase.table("bloqueos").select("*") \
+        .lte("fecha_inicio", str(cal_hasta)).gte("fecha_fin", str(cal_desde)).execute().data
+    for b in bloqueos_cal:
+        for r in RECURSOS:
+            if b["servicio"] == r["servicio"] and (b.get("habitacion") == r["habitacion"]):
+                for col, f in mapa_columna_fecha.items():
+                    if str(b["fecha_inicio"]) <= str(f) <= str(b["fecha_fin"]):
+                        df_cal.at[r["etiqueta"], col] = f"🔒 {b.get('motivo') or 'Bloqueado'}"
+
+    # Reservas confirmadas
+    reservas_cal = supabase.table("reservas").select("*").eq("estado", "confirmada") \
+        .lte("fecha_inicio", str(cal_hasta)).gte("fecha_fin", str(cal_desde)).execute().data
+    for res in reservas_cal:
+        for r in RECURSOS:
+            if res["servicio"] == r["servicio"] and (res.get("habitacion") == r["habitacion"]):
+                nombre_corto = (res.get("nombre") or "Reserva").split()[0]
+                for col, f in mapa_columna_fecha.items():
+                    f_str = str(f)
+                    if f_str == str(res["fecha_inicio"]):
+                        df_cal.at[r["etiqueta"], col] = f"🛬 {nombre_corto}"
+                    elif f_str == str(res["fecha_fin"]):
+                        actual = df_cal.at[r["etiqueta"], col]
+                        df_cal.at[r["etiqueta"], col] = f"🔄 {nombre_corto}" if "🛬" in actual else f"🛫 {nombre_corto}"
+                    elif str(res["fecha_inicio"]) < f_str < str(res["fecha_fin"]):
+                        df_cal.at[r["etiqueta"], col] = f"🔴 {nombre_corto}"
+
+    def _color_celda(val):
+        if "🟢" in val: return "background-color:#e8f5e9;color:#2e7d32;"
+        if "🔴" in val: return "background-color:#fff9c4;color:#b71c1c;"
+        if "🛬" in val: return "background-color:#e3f2fd;color:#0d47a1;font-weight:bold;"
+        if "🛫" in val: return "background-color:#fce4ec;color:#880e4f;font-weight:bold;"
+        if "🔄" in val: return "background-color:#f3e5f5;color:#4a148c;"
+        if "🔒" in val: return "background-color:#eeeeee;color:#424242;"
+        return ""
+
+    st.dataframe(df_cal.style.map(_color_celda), use_container_width=True)
+    st.caption("🟢 Libre · 🛬 Entra · 🛫 Sale · 🔄 Sale y entra el mismo día · 🔴 Ocupado · 🔒 Bloqueado manualmente")
+
+    st.divider()
     st.subheader("Bloquear fechas no disponibles")
     st.caption("Esto es lo que tu sitio web consulta para saber qué fechas mostrar como ocupadas.")
 
