@@ -33,8 +33,8 @@ if not st.session_state.autenticado:
     st.stop()
 
 st.title("🏝️ MitaToya — Panel de administración")
-tab_reservas, tab_disponibilidad, tab_fotos, tab_tarifas = st.tabs(
-    ["📋 Reservas", "📅 Disponibilidad", "🖼️ Fotos", "💲 Tarifas"]
+tab_reservas, tab_disponibilidad, tab_fotos, tab_tarifas, tab_destinos = st.tabs(
+    ["📋 Reservas", "📅 Disponibilidad", "🖼️ Fotos", "💲 Tarifas", "📍 Rincones"]
 )
 
 # ============================================================
@@ -119,9 +119,34 @@ with tab_fotos:
         "marcado como público, y la tabla 'fotos_galeria' (ver README)."
     )
 
-    categoria = st.selectbox("¿Para qué sección es esta foto?", [
-        "galeria", "habitacion_triple", "habitacion_doble"
-    ])
+    RINCONES_BASE = {
+        "destino-ojo-de-agua": "Rincón: Ojo de Agua",
+        "destino-charco-verde": "Rincón: Charco Verde",
+        "destino-cascada-san-ramon": "Rincón: Cascada San Ramón",
+        "destino-volcan-concepcion": "Rincón: Volcán Concepción",
+        "destino-volcan-maderas": "Rincón: Volcán Maderas",
+        "destino-rio-istian": "Rincón: Río Istián",
+        "destino-el-pital": "Rincón: El Pital",
+        "destino-punta-jesus-maria": "Rincón: Punta Jesús María",
+        "destino-santo-domingo": "Rincón: Santo Domingo",
+        "destino-santa-cruz": "Rincón: Santa Cruz",
+        "destino-balgue": "Rincón: Balgüe",
+    }
+    try:
+        destinos_custom = supabase.table("destinos").select("categoria_fotos, titulo").execute().data
+        for d in destinos_custom:
+            RINCONES_BASE[d["categoria_fotos"]] = f"Rincón: {d['titulo']}"
+    except Exception:
+        pass
+
+    opciones_categoria = ["galeria", "habitacion_triple", "habitacion_doble"] + list(RINCONES_BASE.keys())
+    etiquetas_categoria = {**{"galeria": "Galería general", "habitacion_triple": "Habitación Triple", "habitacion_doble": "Habitación Doble"}, **RINCONES_BASE}
+
+    categoria = st.selectbox(
+        "¿Para qué sección es esta foto?",
+        opciones_categoria,
+        format_func=lambda c: etiquetas_categoria.get(c, c)
+    )
     archivo = st.file_uploader("Selecciona una imagen", type=["jpg", "jpeg", "png"])
 
     if archivo and st.button("Subir foto"):
@@ -221,3 +246,71 @@ with tab_tarifas:
             st.success("Tarifas actualizadas. Tu sitio ya las va a usar la próxima vez que alguien lo cargue.")
             st.rerun()
 
+# ============================================================
+# TAB 5: RINCONES (destinos nuevos)
+# ============================================================
+with tab_destinos:
+    st.subheader("Agregar un rincón nuevo")
+    st.caption(
+        "Los 11 rincones que ya tenías (Ojo de Agua, Charco Verde, etc.) siguen tal cual en la "
+        "página. Aquí agregas rincones ADICIONALES — se muestran después de esos 11."
+    )
+
+    import re as _re
+
+    def _slug(texto):
+        s = texto.strip().lower()
+        s = (s.replace("á", "a").replace("é", "e").replace("í", "i")
+               .replace("ó", "o").replace("ú", "u").replace("ñ", "n").replace("ü", "u"))
+        s = _re.sub(r"[^a-z0-9\s-]", "", s)
+        s = _re.sub(r"\s+", "-", s).strip("-")
+        return f"destino-{s}"
+
+    titulo_nuevo = st.text_input("Nombre del rincón", placeholder="Ej: Mirador La Vigía")
+    descripcion_nueva = st.text_area("Descripción corta", placeholder="Una o dos frases sobre este lugar")
+    fotos_nuevas = st.file_uploader(
+        "Fotos de este rincón (puedes subir 1 o 2)", type=["jpg", "jpeg", "png"], accept_multiple_files=True
+    )
+
+    if st.button("➕ Agregar rincón"):
+        if not titulo_nuevo:
+            st.error("Ponle un nombre al rincón primero.")
+        else:
+            categoria_nueva = _slug(titulo_nuevo)
+            try:
+                orden_actual = supabase.table("destinos").select("orden").order("orden", desc=True).limit(1).execute()
+                siguiente_orden = (orden_actual.data[0]["orden"] + 1) if orden_actual.data else 1
+
+                supabase.table("destinos").insert({
+                    "titulo": titulo_nuevo, "descripcion": descripcion_nueva,
+                    "categoria_fotos": categoria_nueva, "orden": siguiente_orden
+                }).execute()
+
+                for foto in (fotos_nuevas or []):
+                    nombre_archivo = f"{categoria_nueva}/{datetime.now().strftime('%Y%m%d%H%M%S')}_{foto.name}"
+                    supabase.storage.from_("fotos").upload(nombre_archivo, foto.getvalue())
+                    url = supabase.storage.from_("fotos").get_public_url(nombre_archivo)
+                    supabase.table("fotos_galeria").insert({
+                        "categoria": categoria_nueva, "url": url, "ruta_storage": nombre_archivo
+                    }).execute()
+
+                st.success(f"'{titulo_nuevo}' agregado — ya debería aparecer en tu sitio.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"No se pudo agregar el rincón: {e}")
+
+    st.divider()
+    st.markdown("### Rincones agregados desde aquí")
+    try:
+        destinos_data = supabase.table("destinos").select("*").order("orden").execute()
+        if not destinos_data.data:
+            st.info("Todavía no has agregado ningún rincón adicional.")
+        else:
+            for d in destinos_data.data:
+                col1, col2 = st.columns([5, 1])
+                col1.write(f"**{d['titulo']}** — {d.get('descripcion', '')}")
+                if col2.button("🗑️ Borrar", key=f"del-destino-{d['id']}"):
+                    supabase.table("destinos").delete().eq("id", d["id"]).execute()
+                    st.rerun()
+    except Exception as e:
+        st.warning(f"No se pudo cargar la lista: {e}")
