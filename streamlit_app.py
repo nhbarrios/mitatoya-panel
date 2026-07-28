@@ -39,7 +39,7 @@ def buscar_choques(servicio, habitacion, fecha_inicio, fecha_fin, excluir_reserv
     cruzan con el rango de fechas dado, para el mismo servicio/habitación."""
     choques = []
 
-    q_res = supabase.table("reservas").select("*").eq("servicio", servicio).eq("estado", "confirmada") \
+    q_res = supabase.table("reservas").select("*").eq("servicio", servicio).in_("estado", ["confirmada", "completada"]) \
         .lte("fecha_inicio", str(fecha_fin)).gte("fecha_fin", str(fecha_inicio))
     if habitacion:
         q_res = q_res.eq("habitacion", habitacion)
@@ -57,8 +57,8 @@ def buscar_choques(servicio, habitacion, fecha_inicio, fecha_fin, excluir_reserv
 
     return choques
 
-tab_reservas, tab_disponibilidad, tab_fotos, tab_tarifas, tab_destinos = st.tabs(
-    ["📋 Reservas", "📅 Disponibilidad", "🖼️ Fotos", "💲 Tarifas", "📍 Rincones"]
+tab_reservas, tab_facturacion, tab_disponibilidad, tab_fotos, tab_tarifas, tab_destinos = st.tabs(
+    ["📋 Reservas", "🧾 Facturación", "📅 Disponibilidad", "🖼️ Fotos", "💲 Tarifas", "📍 Rincones"]
 )
 
 # ============================================================
@@ -76,7 +76,7 @@ with tab_reservas:
         st.markdown("### Cambiar el estado de una reserva")
         col1, col2, col3 = st.columns(3)
         reserva_id = col1.selectbox("Reserva (id)", df["id"].tolist())
-        nuevo_estado = col2.selectbox("Nuevo estado", ["pendiente", "confirmada", "cancelada"])
+        nuevo_estado = col2.selectbox("Nuevo estado", ["pendiente", "confirmada", "cancelada", "completada"])
         if col3.button("Actualizar estado", use_container_width=True):
             fila = df[df["id"] == reserva_id].iloc[0]
             if nuevo_estado == "confirmada" and fila["servicio"] in ("renta", "hospedaje"):
@@ -132,6 +132,189 @@ with tab_reservas:
             st.rerun()
 
 # ============================================================
+# TAB: FACTURACIÓN (cerrar un servicio ya confirmado)
+# ============================================================
+with tab_facturacion:
+    st.subheader("🧾 Facturar y cerrar un servicio")
+    st.caption(
+        "Elige una reserva ya CONFIRMADA, agrega cargos extra si los hubo, y genera el "
+        "comprobante final (PDF o texto para WhatsApp). Al cerrarla, la reserva pasa a "
+        "'completada' y deja de aparecer en esta lista."
+    )
+
+    data_conf = supabase.table("reservas").select("*").eq("estado", "confirmada") \
+        .order("fecha_inicio").execute()
+    df_conf = pd.DataFrame(data_conf.data)
+
+    if df_conf.empty:
+        st.info("No hay reservas confirmadas pendientes de facturar en este momento.")
+    else:
+        etiquetas_reserva = {
+            r["id"]: f'#{r["id"]} · {r["nombre"]} · {r["servicio"]}'
+                      f'{" (" + r["habitacion"] + ")" if r.get("habitacion") else ""}'
+                      f' · {r["fecha_inicio"]} → {r["fecha_fin"]}'
+            for r in df_conf.to_dict("records")
+        }
+        reserva_id_fact = st.selectbox(
+            "Reserva confirmada a facturar",
+            list(etiquetas_reserva.keys()),
+            format_func=lambda i: etiquetas_reserva[i],
+            key="reserva_facturar"
+        )
+        r = df_conf[df_conf["id"] == reserva_id_fact].iloc[0]
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.markdown(f"**Cliente:** {r['nombre']}")
+            st.markdown(f"**Cédula/Pasaporte:** {r.get('documento') or '—'}")
+            st.markdown(f"**WhatsApp:** {r.get('telefono') or '—'}")
+            servicio_txt = r['servicio'] + (f" — {r['habitacion']}" if r.get('habitacion') else "")
+            st.markdown(f"**Servicio:** {servicio_txt}")
+        with col_b:
+            st.markdown(f"**Fechas:** {r['fecha_inicio']} → {r['fecha_fin']}")
+            st.markdown(
+                f"**Personas:** {r.get('cantidad', 1)} · "
+                f"Niños: {r.get('ninos', 0)} · Mascotas: {r.get('mascotas', 0)}"
+            )
+            st.markdown(f"**Total original:** ${float(r.get('total') or 0):.2f}")
+            st.markdown(f"**Depósito ya registrado:** ${float(r.get('deposito') or 0):.2f}")
+
+        st.divider()
+        st.markdown("### Cargos extra (daños, servicios fuera de lo pactado, etc.)")
+        cargo_extra_actual = float(r.get("cargos_extra") or 0)
+        motivo_extra_actual = r.get("motivo_cargos_extra") or ""
+
+        col_c1, col_c2 = st.columns([1, 2])
+        nuevo_cargo_extra = col_c1.number_input(
+            "Monto total de cargos extra (USD)", min_value=0.0, step=1.0,
+            value=cargo_extra_actual, key="fact_cargo_extra"
+        )
+        nuevo_motivo_extra = col_c2.text_input(
+            "Motivo", value=motivo_extra_actual, placeholder="Ej: daño en la puerta trasera",
+            key="fact_motivo_extra"
+        )
+
+        total_original = float(r.get("total") or 0)
+        deposito_pagado = float(r.get("deposito") or 0)
+        total_final = total_original + nuevo_cargo_extra
+        saldo_final = total_final - deposito_pagado
+
+        st.divider()
+        st.markdown("### Resumen del comprobante")
+        col_r1, col_r2, col_r3 = st.columns(3)
+        col_r1.metric("Total del servicio", f"${total_final:.2f}")
+        col_r2.metric("Depósito ya pagado", f"${deposito_pagado:.2f}")
+        col_r3.metric("Saldo a cobrar", f"${saldo_final:.2f}")
+
+        fecha_comprobante = datetime.now().strftime("%d/%m/%Y %H:%M")
+        extra_linea = "Cargos extra"
+        if nuevo_motivo_extra:
+            extra_linea += f" ({nuevo_motivo_extra})"
+        texto_comprobante = f"""COMPROBANTE DE SERVICIO — MitaToya Tours & Taxi Ometepe
+Fecha de emisión: {fecha_comprobante}
+Reserva #{int(r['id'])}
+
+Cliente: {r['nombre']}
+Cédula/Pasaporte: {r.get('documento') or '—'}
+WhatsApp: {r.get('telefono') or '—'}
+
+Servicio: {servicio_txt}
+Fechas: {r['fecha_inicio']} al {r['fecha_fin']}
+Personas: {r.get('cantidad', 1)}   Niños: {r.get('ninos', 0)}   Mascotas: {r.get('mascotas', 0)}
+
+Total del servicio:       ${total_original:.2f}
+{extra_linea}: ${nuevo_cargo_extra:.2f}
+--------------------------------------------
+TOTAL FINAL:               ${total_final:.2f}
+Depósito ya pagado:       -${deposito_pagado:.2f}
+--------------------------------------------
+SALDO A COBRAR:            ${saldo_final:.2f}
+
+¡Gracias por viajar con nosotros!
+"""
+        st.text_area(
+            "Texto del comprobante (para copiar y enviar por WhatsApp)",
+            texto_comprobante, height=320, key="fact_texto"
+        )
+
+        # --- PDF ---
+        pdf_bytes = None
+        try:
+            from fpdf import FPDF
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_font("Helvetica", "B", 16)
+            pdf.cell(0, 10, "MitaToya Tours & Taxi Ometepe", ln=True)
+            pdf.set_font("Helvetica", "", 11)
+            pdf.cell(0, 8, "Comprobante de servicio", ln=True)
+            pdf.cell(0, 8, f"Emitido: {fecha_comprobante}    Reserva #{int(r['id'])}", ln=True)
+            pdf.ln(4)
+            pdf.set_font("Helvetica", "B", 12)
+            pdf.cell(0, 8, "Datos del cliente", ln=True)
+            pdf.set_font("Helvetica", "", 11)
+            pdf.cell(0, 7, f"Nombre: {r['nombre']}", ln=True)
+            pdf.cell(0, 7, f"Cedula/Pasaporte: {r.get('documento') or '-'}", ln=True)
+            pdf.cell(0, 7, f"WhatsApp: {r.get('telefono') or '-'}", ln=True)
+            pdf.ln(4)
+            pdf.set_font("Helvetica", "B", 12)
+            pdf.cell(0, 8, "Servicio", ln=True)
+            pdf.set_font("Helvetica", "", 11)
+            pdf.cell(0, 7, f"Tipo: {servicio_txt}", ln=True)
+            pdf.cell(0, 7, f"Fechas: {r['fecha_inicio']} al {r['fecha_fin']}", ln=True)
+            pdf.cell(
+                0, 7,
+                f"Personas: {r.get('cantidad', 1)}   Ninos: {r.get('ninos', 0)}   "
+                f"Mascotas: {r.get('mascotas', 0)}", ln=True
+            )
+            pdf.ln(6)
+            pdf.set_font("Helvetica", "B", 12)
+            pdf.cell(0, 8, "Totales", ln=True)
+            pdf.set_font("Helvetica", "", 11)
+            pdf.cell(0, 7, f"Total del servicio: ${total_original:.2f}", ln=True)
+            pdf.cell(0, 7, f"{extra_linea}: ${nuevo_cargo_extra:.2f}", ln=True)
+            pdf.set_font("Helvetica", "B", 12)
+            pdf.cell(0, 8, f"TOTAL FINAL: ${total_final:.2f}", ln=True)
+            pdf.set_font("Helvetica", "", 11)
+            pdf.cell(0, 7, f"Deposito ya pagado: -${deposito_pagado:.2f}", ln=True)
+            pdf.set_font("Helvetica", "B", 12)
+            pdf.cell(0, 8, f"SALDO A COBRAR: ${saldo_final:.2f}", ln=True)
+            pdf_bytes = bytes(pdf.output())
+        except ImportError:
+            st.warning(
+                "Para descargar el comprobante en PDF, agrega `fpdf2` a tu requirements.txt "
+                "(`pip install fpdf2`) y reinicia la app. Mientras tanto, usa el texto de arriba "
+                "para enviarlo por WhatsApp."
+            )
+
+        col_d1, col_d2 = st.columns(2)
+        if pdf_bytes:
+            col_d1.download_button(
+                "⬇️ Descargar comprobante (PDF)", data=pdf_bytes,
+                file_name=f"comprobante_reserva_{int(r['id'])}.pdf", mime="application/pdf",
+                use_container_width=True
+            )
+        tel_limpio = "".join(ch for ch in str(r.get("telefono") or "") if ch.isdigit())
+        if tel_limpio:
+            from urllib.parse import quote
+            wa_link = f"https://wa.me/{tel_limpio}?text={quote(texto_comprobante)}"
+            col_d2.link_button("💬 Enviar por WhatsApp", wa_link, use_container_width=True)
+
+        st.divider()
+        st.markdown("### Cerrar este servicio")
+        st.caption(
+            "Al cerrar, se guardan los cargos extra de arriba y la reserva pasa a 'completada' "
+            "— ya no aparecerá como pendiente de facturar."
+        )
+        if st.button("✅ Guardar cargos y marcar servicio como completado", use_container_width=True):
+            supabase.table("reservas").update({
+                "cargos_extra": nuevo_cargo_extra,
+                "motivo_cargos_extra": nuevo_motivo_extra,
+                "estado": "completada"
+            }).eq("id", reserva_id_fact).execute()
+            st.success("Servicio cerrado y comprobante listo. La reserva ahora aparece como 'completada'.")
+            st.rerun()
+
+# ============================================================
 # TAB 2: DISPONIBILIDAD (calendario de bloqueos)
 # ============================================================
 with tab_disponibilidad:
@@ -166,7 +349,7 @@ with tab_disponibilidad:
                         df_cal.at[r["etiqueta"], col] = f"🔒 {b.get('motivo') or 'Bloqueado'}"
 
     # Reservas confirmadas
-    reservas_cal = supabase.table("reservas").select("*").eq("estado", "confirmada") \
+    reservas_cal = supabase.table("reservas").select("*").in_("estado", ["confirmada", "completada"]) \
         .lte("fecha_inicio", str(cal_hasta)).gte("fecha_fin", str(cal_desde)).execute().data
     for res in reservas_cal:
         for r in RECURSOS:
@@ -459,4 +642,3 @@ with tab_destinos:
                     st.rerun()
     except Exception as e:
         st.warning(f"No se pudo cargar la lista: {e}")
-
