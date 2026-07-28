@@ -33,6 +33,30 @@ if not st.session_state.autenticado:
     st.stop()
 
 st.title("🏝️ MitaToya — Panel de administración")
+
+def buscar_choques(servicio, habitacion, fecha_inicio, fecha_fin, excluir_reserva_id=None):
+    """Devuelve una lista de conflictos (reservas confirmadas y bloqueos) que se
+    cruzan con el rango de fechas dado, para el mismo servicio/habitación."""
+    choques = []
+
+    q_res = supabase.table("reservas").select("*").eq("servicio", servicio).eq("estado", "confirmada") \
+        .lte("fecha_inicio", str(fecha_fin)).gte("fecha_fin", str(fecha_inicio))
+    if habitacion:
+        q_res = q_res.eq("habitacion", habitacion)
+    for r in q_res.execute().data:
+        if excluir_reserva_id and r["id"] == excluir_reserva_id:
+            continue
+        choques.append(f"Reserva confirmada de {r['nombre']} ({r['fecha_inicio']} al {r['fecha_fin']})")
+
+    q_bloq = supabase.table("bloqueos").select("*").eq("servicio", servicio) \
+        .lte("fecha_inicio", str(fecha_fin)).gte("fecha_fin", str(fecha_inicio))
+    if habitacion:
+        q_bloq = q_bloq.eq("habitacion", habitacion)
+    for b in q_bloq.execute().data:
+        choques.append(f"Bloqueo manual: {b.get('motivo') or 'Ocupado'} ({b['fecha_inicio']} al {b['fecha_fin']})")
+
+    return choques
+
 tab_reservas, tab_disponibilidad, tab_fotos, tab_tarifas, tab_destinos = st.tabs(
     ["📋 Reservas", "📅 Disponibilidad", "🖼️ Fotos", "💲 Tarifas", "📍 Rincones"]
 )
@@ -54,9 +78,34 @@ with tab_reservas:
         reserva_id = col1.selectbox("Reserva (id)", df["id"].tolist())
         nuevo_estado = col2.selectbox("Nuevo estado", ["pendiente", "confirmada", "cancelada"])
         if col3.button("Actualizar estado", use_container_width=True):
-            supabase.table("reservas").update({"estado": nuevo_estado}).eq("id", reserva_id).execute()
-            st.success("Reserva actualizada.")
-            st.rerun()
+            fila = df[df["id"] == reserva_id].iloc[0]
+            if nuevo_estado == "confirmada" and fila["servicio"] in ("renta", "hospedaje"):
+                choques = buscar_choques(
+                    fila["servicio"], fila.get("habitacion"),
+                    fila["fecha_inicio"], fila["fecha_fin"], excluir_reserva_id=reserva_id
+                )
+                if choques:
+                    st.session_state["choque_confirmacion_pendiente"] = {"id": reserva_id, "estado": nuevo_estado}
+                    st.warning(
+                        "⚠️ Esas fechas ya tienen algo registrado para este servicio:\n\n"
+                        + "\n".join(f"- {c}" for c in choques)
+                    )
+                else:
+                    supabase.table("reservas").update({"estado": nuevo_estado}).eq("id", reserva_id).execute()
+                    st.success("Reserva actualizada.")
+                    st.rerun()
+            else:
+                supabase.table("reservas").update({"estado": nuevo_estado}).eq("id", reserva_id).execute()
+                st.success("Reserva actualizada.")
+                st.rerun()
+
+        if st.session_state.get("choque_confirmacion_pendiente"):
+            if st.button("Confirmar de todos modos (ya lo revisé)"):
+                p = st.session_state["choque_confirmacion_pendiente"]
+                supabase.table("reservas").update({"estado": p["estado"]}).eq("id", p["id"]).execute()
+                del st.session_state["choque_confirmacion_pendiente"]
+                st.success("Reserva actualizada.")
+                st.rerun()
 
         st.caption(
             "Tip: cuando confirmes una reserva de renta de carro u hospedaje, "
@@ -163,13 +212,29 @@ with tab_disponibilidad:
         if fecha_fin < fecha_inicio:
             st.error("La fecha 'Hasta' no puede ser anterior a 'Desde'.")
         else:
-            supabase.table("bloqueos").insert({
-                "servicio": servicio,
-                "habitacion": habitacion,
-                "fecha_inicio": str(fecha_inicio),
-                "fecha_fin": str(fecha_fin),
-                "motivo": motivo
-            }).execute()
+            choques = buscar_choques(servicio, habitacion, fecha_inicio, fecha_fin)
+            if choques:
+                st.session_state["choques_bloqueo_pendiente"] = {
+                    "servicio": servicio, "habitacion": habitacion,
+                    "fecha_inicio": str(fecha_inicio), "fecha_fin": str(fecha_fin), "motivo": motivo
+                }
+                st.warning(
+                    "⚠️ Estas fechas ya tienen algo registrado para este servicio:\n\n"
+                    + "\n".join(f"- {c}" for c in choques)
+                )
+            else:
+                supabase.table("bloqueos").insert({
+                    "servicio": servicio, "habitacion": habitacion,
+                    "fecha_inicio": str(fecha_inicio), "fecha_fin": str(fecha_fin), "motivo": motivo
+                }).execute()
+                st.success("Fechas bloqueadas correctamente.")
+                st.rerun()
+
+    if st.session_state.get("choques_bloqueo_pendiente"):
+        if st.button("Bloquear de todos modos (ya lo revisé)"):
+            p = st.session_state["choques_bloqueo_pendiente"]
+            supabase.table("bloqueos").insert(p).execute()
+            del st.session_state["choques_bloqueo_pendiente"]
             st.success("Fechas bloqueadas correctamente.")
             st.rerun()
 
