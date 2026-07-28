@@ -64,6 +64,24 @@ with tab_reservas:
             "para que no se dupliquen."
         )
 
+        st.divider()
+        st.markdown("### Agregar un cargo extra (daño, servicio fuera de lo pactado, etc.)")
+        st.caption(
+            "Esto es para ajustes que surgen DESPUÉS de la reserva — por ejemplo, un daño al "
+            "vehículo o una parada extra que el cliente pidió. No afecta el total original, "
+            "queda registrado aparte."
+        )
+        col_e1, col_e2, col_e3 = st.columns([1, 1, 2])
+        reserva_id_extra = col_e1.selectbox("Reserva (id)", df["id"].tolist(), key="reserva_extra")
+        monto_extra = col_e2.number_input("Monto extra (USD)", min_value=0.0, step=1.0, key="monto_extra")
+        motivo_extra = col_e3.text_input("Motivo", placeholder="Ej: daño en la puerta trasera", key="motivo_extra")
+        if st.button("➕ Aplicar cargo extra"):
+            supabase.table("reservas").update({
+                "cargos_extra": monto_extra, "motivo_cargos_extra": motivo_extra
+            }).eq("id", reserva_id_extra).execute()
+            st.success("Cargo extra aplicado — ya aparece en la tabla de reservas de arriba.")
+            st.rerun()
+
 # ============================================================
 # TAB 2: DISPONIBILIDAD (calendario de bloqueos)
 # ============================================================
@@ -280,6 +298,8 @@ with tab_tarifas:
         "renta": "Renta de carro (USD, por día)",
         "hospedaje_triple": "Habitación Triple (USD, por noche)",
         "hospedaje_doble": "Habitación Doble (USD, por noche)",
+        "tarifa_nino": "Cargo extra por niño (USD)",
+        "tarifa_mascota": "Cargo extra por mascota (USD)",
         "deposito_porcentaje": "Porcentaje de depósito (%)",
         "tipo_cambio": "Tipo de cambio (córdobas por 1 USD)",
     }
@@ -374,3 +394,4 @@ with tab_destinos:
                     st.rerun()
     except Exception as e:
         st.warning(f"No se pudo cargar la lista: {e}")
+
