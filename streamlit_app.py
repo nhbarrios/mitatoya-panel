@@ -409,7 +409,7 @@ SALDO A COBRAR:            ${saldo_final:.2f}
                 "6. Reclamos sobre este comprobante: contactar por WhatsApp dentro de las 48 horas de su emision.",
             ]
             for linea in terminos:
-                pdf.multi_cell(0, 4.3, pdf_safe(linea))
+                pdf.multi_cell(0, 4.3, pdf_safe(linea), new_x="LMARGIN", new_y="NEXT")
             pdf.set_text_color(0, 0, 0)
             pdf.ln(4)
 
