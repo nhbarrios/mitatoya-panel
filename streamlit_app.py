@@ -5,6 +5,20 @@ import pandas as pd
 
 st.set_page_config(page_title="MitaToya · Panel de administración", page_icon="🏝️", layout="wide")
 
+
+def pdf_safe(texto):
+    """Convierte cualquier texto a algo que las fuentes core de fpdf (latin-1) puedan
+    dibujar sin explotar — reemplaza rayas, comillas curvas, etc. por su versión simple
+    y, si aun así queda algún carácter raro (emojis, etc.), lo descarta en vez de fallar."""
+    texto = str(texto)
+    reemplazos = {
+        "—": "-", "–": "-", "’": "'", "‘": "'", "“": '"', "”": '"',
+        "…": "...", "•": "-", "→": "->",
+    }
+    for viejo, nuevo in reemplazos.items():
+        texto = texto.replace(viejo, nuevo)
+    return texto.encode("latin-1", "replace").decode("latin-1")
+
 # ============================================================
 # CONEXIÓN A SUPABASE
 # Estos valores se leen desde Streamlit Secrets, nunca los escribas aquí directamente.
@@ -112,24 +126,11 @@ with tab_reservas:
             "recuerda ir a la pestaña **Disponibilidad** y bloquear esas fechas "
             "para que no se dupliquen."
         )
-
-        st.divider()
-        st.markdown("### Agregar un cargo extra (daño, servicio fuera de lo pactado, etc.)")
         st.caption(
-            "Esto es para ajustes que surgen DESPUÉS de la reserva — por ejemplo, un daño al "
-            "vehículo o una parada extra que el cliente pidió. No afecta el total original, "
-            "queda registrado aparte."
+            "Los cargos extra (daños, servicios fuera de lo pactado, etc.) ya no se agregan "
+            "aquí — se agregan en la pestaña **🧾 Facturación**, junto con el resto del cierre "
+            "del servicio."
         )
-        col_e1, col_e2, col_e3 = st.columns([1, 1, 2])
-        reserva_id_extra = col_e1.selectbox("Reserva (id)", df["id"].tolist(), key="reserva_extra")
-        monto_extra = col_e2.number_input("Monto extra (USD)", min_value=0.0, step=1.0, key="monto_extra")
-        motivo_extra = col_e3.text_input("Motivo", placeholder="Ej: daño en la puerta trasera", key="motivo_extra")
-        if st.button("➕ Aplicar cargo extra"):
-            supabase.table("reservas").update({
-                "cargos_extra": monto_extra, "motivo_cargos_extra": motivo_extra
-            }).eq("id", reserva_id_extra).execute()
-            st.success("Cargo extra aplicado — ya aparece en la tabla de reservas de arriba.")
-            st.rerun()
 
 # ============================================================
 # TAB: FACTURACIÓN (cerrar un servicio ya confirmado)
@@ -162,6 +163,10 @@ with tab_facturacion:
             key="reserva_facturar"
         )
         r = df_conf[df_conf["id"] == reserva_id_fact].iloc[0]
+        rango_fechas_txt = (
+            str(r['fecha_inicio']) if r['fecha_inicio'] == r['fecha_fin']
+            else f"{r['fecha_inicio']} al {r['fecha_fin']}"
+        )
 
         col_a, col_b = st.columns(2)
         with col_a:
@@ -171,7 +176,7 @@ with tab_facturacion:
             servicio_txt = r['servicio'] + (f" — {r['habitacion']}" if r.get('habitacion') else "")
             st.markdown(f"**Servicio:** {servicio_txt}")
         with col_b:
-            st.markdown(f"**Fechas:** {r['fecha_inicio']} → {r['fecha_fin']}")
+            st.markdown(f"**Fecha(s):** {rango_fechas_txt}")
             st.markdown(
                 f"**Personas:** {r.get('cantidad', 1)} · "
                 f"Niños: {r.get('ninos', 0)} · Mascotas: {r.get('mascotas', 0)}"
@@ -219,7 +224,7 @@ Cédula/Pasaporte: {r.get('documento') or '—'}
 WhatsApp: {r.get('telefono') or '—'}
 
 Servicio: {servicio_txt}
-Fechas: {r['fecha_inicio']} al {r['fecha_fin']}
+Fecha(s): {rango_fechas_txt}
 Personas: {r.get('cantidad', 1)}   Niños: {r.get('ninos', 0)}   Mascotas: {r.get('mascotas', 0)}
 
 Total del servicio:       ${total_original:.2f}
@@ -247,43 +252,50 @@ SALDO A COBRAR:            ${saldo_final:.2f}
             pdf.cell(0, 10, "MitaToya Tours & Taxi Ometepe", ln=True)
             pdf.set_font("Helvetica", "", 11)
             pdf.cell(0, 8, "Comprobante de servicio", ln=True)
-            pdf.cell(0, 8, f"Emitido: {fecha_comprobante}    Reserva #{int(r['id'])}", ln=True)
+            pdf.cell(0, 8, pdf_safe(f"Emitido: {fecha_comprobante}    Reserva #{int(r['id'])}"), ln=True)
             pdf.ln(4)
             pdf.set_font("Helvetica", "B", 12)
             pdf.cell(0, 8, "Datos del cliente", ln=True)
             pdf.set_font("Helvetica", "", 11)
-            pdf.cell(0, 7, f"Nombre: {r['nombre']}", ln=True)
-            pdf.cell(0, 7, f"Cedula/Pasaporte: {r.get('documento') or '-'}", ln=True)
-            pdf.cell(0, 7, f"WhatsApp: {r.get('telefono') or '-'}", ln=True)
+            pdf.cell(0, 7, pdf_safe(f"Nombre: {r['nombre']}"), ln=True)
+            pdf.cell(0, 7, pdf_safe(f"Cedula/Pasaporte: {r.get('documento') or '-'}"), ln=True)
+            pdf.cell(0, 7, pdf_safe(f"WhatsApp: {r.get('telefono') or '-'}"), ln=True)
             pdf.ln(4)
             pdf.set_font("Helvetica", "B", 12)
             pdf.cell(0, 8, "Servicio", ln=True)
             pdf.set_font("Helvetica", "", 11)
-            pdf.cell(0, 7, f"Tipo: {servicio_txt}", ln=True)
-            pdf.cell(0, 7, f"Fechas: {r['fecha_inicio']} al {r['fecha_fin']}", ln=True)
+            pdf.cell(0, 7, pdf_safe(f"Tipo: {servicio_txt}"), ln=True)
+            pdf.cell(0, 7, pdf_safe(f"Fechas: {rango_fechas_txt}"), ln=True)
             pdf.cell(
                 0, 7,
-                f"Personas: {r.get('cantidad', 1)}   Ninos: {r.get('ninos', 0)}   "
-                f"Mascotas: {r.get('mascotas', 0)}", ln=True
+                pdf_safe(
+                    f"Personas: {r.get('cantidad', 1)}   Ninos: {r.get('ninos', 0)}   "
+                    f"Mascotas: {r.get('mascotas', 0)}"
+                ), ln=True
             )
             pdf.ln(6)
             pdf.set_font("Helvetica", "B", 12)
             pdf.cell(0, 8, "Totales", ln=True)
             pdf.set_font("Helvetica", "", 11)
-            pdf.cell(0, 7, f"Total del servicio: ${total_original:.2f}", ln=True)
-            pdf.cell(0, 7, f"{extra_linea}: ${nuevo_cargo_extra:.2f}", ln=True)
+            pdf.cell(0, 7, pdf_safe(f"Total del servicio: ${total_original:.2f}"), ln=True)
+            pdf.cell(0, 7, pdf_safe(f"{extra_linea}: ${nuevo_cargo_extra:.2f}"), ln=True)
             pdf.set_font("Helvetica", "B", 12)
-            pdf.cell(0, 8, f"TOTAL FINAL: ${total_final:.2f}", ln=True)
+            pdf.cell(0, 8, pdf_safe(f"TOTAL FINAL: ${total_final:.2f}"), ln=True)
             pdf.set_font("Helvetica", "", 11)
-            pdf.cell(0, 7, f"Deposito ya pagado: -${deposito_pagado:.2f}", ln=True)
+            pdf.cell(0, 7, pdf_safe(f"Deposito ya pagado: -${deposito_pagado:.2f}"), ln=True)
             pdf.set_font("Helvetica", "B", 12)
-            pdf.cell(0, 8, f"SALDO A COBRAR: ${saldo_final:.2f}", ln=True)
+            pdf.cell(0, 8, pdf_safe(f"SALDO A COBRAR: ${saldo_final:.2f}"), ln=True)
             pdf_bytes = bytes(pdf.output())
         except ImportError:
             st.warning(
                 "Para descargar el comprobante en PDF, agrega `fpdf2` a tu requirements.txt "
                 "(`pip install fpdf2`) y reinicia la app. Mientras tanto, usa el texto de arriba "
                 "para enviarlo por WhatsApp."
+            )
+        except Exception as e:
+            st.warning(
+                "No se pudo generar el PDF de este comprobante (usa el texto de arriba mientras "
+                f"lo revisamos). Detalle técnico: {e}"
             )
 
         col_d1, col_d2 = st.columns(2)
