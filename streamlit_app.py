@@ -103,8 +103,8 @@ def buscar_choques(servicio, habitacion, fecha_inicio, fecha_fin, excluir_reserv
 
     return choques
 
-tab_reservas, tab_facturacion, tab_disponibilidad, tab_fotos, tab_tarifas, tab_destinos = st.tabs(
-    ["📋 Reservas", "🧾 Facturación", "📅 Disponibilidad", "🖼️ Fotos", "💲 Tarifas", "📍 Rincones"]
+tab_reservas, tab_facturacion, tab_disponibilidad, tab_fotos, tab_tarifas, tab_destinos, tab_redes = st.tabs(
+    ["📋 Reservas", "🧾 Facturación", "📅 Disponibilidad", "🖼️ Fotos", "💲 Tarifas", "📍 Rincones", "🌐 Redes Sociales"]
 )
 
 # ============================================================
@@ -120,10 +120,35 @@ with tab_reservas:
     else:
         st.dataframe(df, use_container_width=True)
         st.markdown("### Cambiar el estado de una reserva")
+
+        TRANSICIONES = {
+            "pendiente": ["pendiente", "confirmada", "cancelada"],
+            "confirmada": ["confirmada", "cancelada"],
+            "completada": ["completada"],
+            "cancelada": ["cancelada"],
+        }
+
         col1, col2, col3 = st.columns(3)
         reserva_id = col1.selectbox("Reserva (id)", df["id"].tolist())
-        nuevo_estado = col2.selectbox("Nuevo estado", ["pendiente", "confirmada", "cancelada", "completada"])
-        if col3.button("Actualizar estado", use_container_width=True):
+        estado_actual = df[df["id"] == reserva_id].iloc[0]["estado"]
+        opciones_estado = TRANSICIONES.get(estado_actual, ["pendiente", "confirmada", "cancelada"])
+        es_terminal = estado_actual in ("completada", "cancelada")
+
+        nuevo_estado = col2.selectbox(
+            "Nuevo estado", opciones_estado, key=f"nuevo_estado_{reserva_id}",
+            disabled=es_terminal
+        )
+
+        st.caption(f"Estado actual: **{estado_actual}**")
+        if estado_actual == "confirmada":
+            st.caption(
+                "Para marcarla como 'completada', ciérrala desde la pestaña **🧾 Facturación** "
+                "(ahí se registran los cargos extra y se genera el comprobante)."
+            )
+        if es_terminal:
+            st.caption(f"Esta reserva ya está '{estado_actual}' y no se puede cambiar más desde aquí.")
+
+        if col3.button("Actualizar estado", use_container_width=True, disabled=es_terminal):
             fila = df[df["id"] == reserva_id].iloc[0]
             if nuevo_estado == "confirmada" and fila["servicio"] in ("renta", "hospedaje"):
                 choques = buscar_choques(
@@ -791,3 +816,49 @@ with tab_destinos:
                     st.rerun()
     except Exception as e:
         st.warning(f"No se pudo cargar la lista: {e}")
+
+# ============================================================
+# TAB 7: REDES SOCIALES
+# ============================================================
+with tab_redes:
+    st.subheader("Enlaces a tus redes sociales")
+    st.caption("Los que actives aquí aparecen automáticamente como iconos en tu sitio web.")
+
+    PLATAFORMAS = {
+        "facebook": "Facebook", "instagram": "Instagram",
+        "x": "X (Twitter)", "tiktok": "TikTok",
+    }
+
+    col_r1, col_r2 = st.columns(2)
+    plataforma_nueva = col_r1.selectbox("Plataforma", list(PLATAFORMAS.keys()), format_func=lambda p: PLATAFORMAS[p])
+    url_nueva = col_r2.text_input("Link completo", placeholder="https://facebook.com/tu-pagina")
+
+    if st.button("➕ Agregar / actualizar"):
+        if not url_nueva:
+            st.error("Pega el link primero.")
+        else:
+            existente = supabase.table("redes_sociales").select("id").eq("plataforma", plataforma_nueva).execute()
+            if existente.data:
+                supabase.table("redes_sociales").update({"url": url_nueva, "activo": True}).eq("plataforma", plataforma_nueva).execute()
+            else:
+                supabase.table("redes_sociales").insert({"plataforma": plataforma_nueva, "url": url_nueva, "activo": True}).execute()
+            st.success(f"{PLATAFORMAS[plataforma_nueva]} actualizado.")
+            st.rerun()
+
+    st.divider()
+    st.markdown("### Tus redes actuales")
+    redes_data = supabase.table("redes_sociales").select("*").order("orden").execute().data
+    if not redes_data:
+        st.info("Todavía no has agregado ninguna red social.")
+    else:
+        for red in redes_data:
+            c1, c2, c3, c4 = st.columns([2, 4, 1, 1])
+            c1.write(f"**{PLATAFORMAS.get(red['plataforma'], red['plataforma'])}**")
+            c2.write(red["url"])
+            nuevo_activo = c3.checkbox("Activo", value=red["activo"], key=f"activo-{red['id']}")
+            if nuevo_activo != red["activo"]:
+                supabase.table("redes_sociales").update({"activo": nuevo_activo}).eq("id", red["id"]).execute()
+                st.rerun()
+            if c4.button("🗑️", key=f"del-red-{red['id']}"):
+                supabase.table("redes_sociales").delete().eq("id", red["id"]).execute()
+                st.rerun()
