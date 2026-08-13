@@ -51,6 +51,176 @@ def logo_marca_agua():
         _logo_cache["wm"] = marca_agua
     return _logo_cache["wm"]
 
+
+def generar_pdf_comprobante(referencia, cliente, documento, telefono, servicio_txt,
+                             fechas_txt, detalle_txt, total_original, cargo_extra,
+                             motivo_extra, deposito_pagado, fecha_comprobante):
+    """Genera el comprobante en PDF. Se usa tanto para reservas cerradas desde
+    Facturación como para facturas libres (servicios sin reserva de por medio).
+    Devuelve (pdf_bytes, texto_comprobante, total_final, saldo_final)."""
+    total_final = total_original + cargo_extra
+    saldo_final = total_final - deposito_pagado
+    extra_linea = "Cargos extra"
+    if motivo_extra:
+        extra_linea += f" ({motivo_extra})"
+
+    texto_comprobante = f"""COMPROBANTE DE SERVICIO — MitaToya Tours & Taxi Ometepe
+Fecha de emisión: {fecha_comprobante}
+{referencia}
+
+Cliente: {cliente}
+Cédula/Pasaporte: {documento or '—'}
+WhatsApp: {telefono or '—'}
+
+Servicio: {servicio_txt}
+{detalle_txt}
+
+Total del servicio:       ${total_original:.2f}
+{extra_linea}: ${cargo_extra:.2f}
+--------------------------------------------
+TOTAL FINAL:               ${total_final:.2f}
+Depósito ya pagado:       -${deposito_pagado:.2f}
+--------------------------------------------
+SALDO A COBRAR:            ${saldo_final:.2f}
+
+¡Gracias por viajar con nosotros!
+"""
+
+    INK = (31, 45, 44)
+    GOLD = (232, 163, 61)
+    LAKE = (31, 111, 122)
+    GRIS = (110, 110, 110)
+
+    from fpdf import FPDF
+    pdf = FPDF(format="A4", unit="mm")
+    pdf.set_auto_page_break(True, margin=18)
+    pdf.add_page()
+    page_w = pdf.w
+    margin = 15
+
+    try:
+        logo_img = logo_mitatoya()
+    except Exception:
+        logo_img = None
+    try:
+        if logo_img is not None:
+            wm_img = logo_marca_agua()
+            wm_w = 120
+            pdf.image(wm_img, x=(page_w - wm_w) / 2, y=90, w=wm_w)
+    except Exception:
+        pass
+
+    pdf.set_fill_color(*INK)
+    pdf.rect(0, 0, page_w, 30, style="F")
+    if logo_img is not None:
+        try:
+            pdf.image(logo_img, x=margin, y=5, h=20)
+        except Exception:
+            pass
+    pdf.set_xy(margin + 22, 7)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 8, "MitaToya Tours & Taxi Ometepe", ln=True)
+    pdf.set_x(margin + 22)
+    pdf.set_font("Helvetica", "", 9.5)
+    pdf.cell(0, 6, "Isla de Ometepe, Nicaragua", ln=True)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_y(36)
+
+    pdf.set_font("Helvetica", "B", 15)
+    pdf.set_text_color(*INK)
+    pdf.cell(0, 8, "COMPROBANTE DE SERVICIO", ln=True)
+    pdf.set_draw_color(*GOLD)
+    pdf.set_line_width(0.8)
+    y_linea = pdf.get_y() + 1
+    pdf.line(margin, y_linea, page_w - margin, y_linea)
+    pdf.ln(5)
+
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(*GRIS)
+    pdf.cell(0, 6, pdf_safe(f"{referencia}    ·    Emitido: {fecha_comprobante}"), ln=True)
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(3)
+
+    def titulo_seccion(txt):
+        pdf.set_font("Helvetica", "B", 11.5)
+        pdf.set_text_color(*LAKE)
+        pdf.cell(0, 8, txt, ln=True)
+        pdf.set_draw_color(220, 220, 220)
+        pdf.set_line_width(0.2)
+        y = pdf.get_y()
+        pdf.line(margin, y, page_w - margin, y)
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Helvetica", "", 10.5)
+        pdf.ln(2)
+
+    titulo_seccion("Datos del cliente")
+    pdf.cell(0, 6.5, pdf_safe(f"Nombre: {cliente}"), ln=True)
+    pdf.cell(0, 6.5, pdf_safe(f"Cedula/Pasaporte: {documento or '-'}"), ln=True)
+    pdf.cell(0, 6.5, pdf_safe(f"WhatsApp: {telefono or '-'}"), ln=True)
+    pdf.ln(3)
+
+    titulo_seccion("Servicio")
+    pdf.cell(0, 6.5, pdf_safe(f"Tipo: {servicio_txt}"), ln=True)
+    pdf.cell(0, 6.5, pdf_safe(f"Fechas: {fechas_txt}"), ln=True)
+    for linea in detalle_txt.split("\n"):
+        if linea.strip():
+            pdf.cell(0, 6.5, pdf_safe(linea), ln=True)
+    pdf.ln(3)
+
+    titulo_seccion("Totales")
+    col1, col2 = 130, page_w - 2 * margin - 130
+
+    def fila_total(label, valor, negrita=False, resaltado=False):
+        pdf.set_font("Helvetica", "B" if negrita else "", 10.5)
+        if resaltado:
+            pdf.set_fill_color(*GOLD)
+            pdf.set_text_color(*INK)
+            pdf.cell(col1, 8, pdf_safe(label), border=0, fill=True)
+            pdf.cell(col2, 8, pdf_safe(valor), border=0, fill=True, align="R", ln=True)
+            pdf.set_text_color(0, 0, 0)
+        else:
+            pdf.cell(col1, 8, pdf_safe(label), border="B")
+            pdf.cell(col2, 8, pdf_safe(valor), border="B", align="R", ln=True)
+
+    fila_total("Total del servicio", f"${total_original:.2f}")
+    fila_total(extra_linea, f"${cargo_extra:.2f}")
+    fila_total("TOTAL FINAL", f"${total_final:.2f}", negrita=True)
+    fila_total("Deposito ya pagado", f"-${deposito_pagado:.2f}")
+    pdf.ln(2)
+    fila_total("SALDO A COBRAR", f"${saldo_final:.2f}", negrita=True, resaltado=True)
+    pdf.ln(8)
+
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_text_color(*GRIS)
+    pdf.cell(0, 6, "Terminos y condiciones", ln=True)
+    pdf.set_font("Helvetica", "", 8)
+    terminos = [
+        "1. El deposito confirma la reserva y no es reembolsable ante cancelacion por parte del cliente.",
+        "2. Este comprobante certifica que el servicio fue prestado y facturado en su totalidad.",
+        "3. Los cargos extra (danos, servicios fuera de lo pactado, etc.) forman parte del saldo a cobrar.",
+        "4. El saldo pendiente se cancela al momento de la entrega de este comprobante, salvo acuerdo distinto.",
+        "5. MitaToya Tours & Taxi Ometepe no se hace responsable por objetos personales olvidados en "
+        "vehiculos o habitaciones.",
+        "6. Reclamos sobre este comprobante: contactar por WhatsApp dentro de las 48 horas de su emision.",
+    ]
+    for linea in terminos:
+        pdf.multi_cell(0, 4.3, pdf_safe(linea), new_x="LMARGIN", new_y="NEXT")
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(4)
+
+    pdf.set_draw_color(*GOLD)
+    pdf.set_line_width(0.5)
+    y_pie = pdf.get_y()
+    pdf.line(margin, y_pie, page_w - margin, y_pie)
+    pdf.ln(3)
+    pdf.set_font("Helvetica", "I", 9.5)
+    pdf.set_text_color(*LAKE)
+    pdf.cell(0, 6, "Gracias por viajar con nosotros - MitaToya Tours & Taxi Ometepe", ln=True, align="C")
+
+    pdf_bytes = bytes(pdf.output())
+    return pdf_bytes, texto_comprobante, total_final, saldo_final
+
 # ============================================================
 # CONEXIÓN A SUPABASE
 # Estos valores se leen desde Streamlit Secrets, nunca los escribas aquí directamente.
@@ -189,11 +359,66 @@ with tab_reservas:
             "del servicio."
         )
 
+        st.divider()
+        st.markdown("### 🗑️ Borrar una reserva por completo")
+        st.caption(
+            "Esto es distinto a 'cancelar' — borra la fila para siempre (útil para limpiar "
+            "pruebas). No se puede deshacer."
+        )
+        col_del1, col_del2 = st.columns([3, 1])
+        reserva_borrar = col_del1.selectbox("Reserva (id) a borrar", df["id"].tolist(), key="reserva_borrar")
+        if col_del2.button("Borrar definitivamente", use_container_width=True):
+            st.session_state["confirmar_borrado"] = reserva_borrar
+        if st.session_state.get("confirmar_borrado") == reserva_borrar:
+            st.warning(f"¿Seguro que quieres borrar la reserva #{reserva_borrar}? No se puede deshacer.")
+            if st.button("Sí, borrar para siempre", type="primary"):
+                supabase.table("reservas").delete().eq("id", reserva_borrar).execute()
+                del st.session_state["confirmar_borrado"]
+                st.success("Reserva borrada.")
+                st.rerun()
+
+        st.divider()
+        st.markdown("### 📊 Historial y resumen")
+        col_h1, col_h2 = st.columns(2)
+        filtro_estado = col_h1.multiselect(
+            "Filtrar por estado", ["pendiente", "confirmada", "cancelada", "completada"],
+            default=["pendiente", "confirmada", "cancelada", "completada"]
+        )
+        filtro_servicio = col_h2.multiselect(
+            "Filtrar por servicio", ["traslado", "tour", "grupo", "renta", "hospedaje"],
+            default=["traslado", "tour", "grupo", "renta", "hospedaje"]
+        )
+        df_hist = df[df["estado"].isin(filtro_estado) & df["servicio"].isin(filtro_servicio)]
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total de reservas", len(df_hist))
+        m2.metric("Confirmadas + completadas", len(df_hist[df_hist["estado"].isin(["confirmada", "completada"])]))
+        m3.metric("Canceladas", len(df_hist[df_hist["estado"] == "cancelada"]))
+        ventas = df_hist[df_hist["estado"].isin(["confirmada", "completada"])]["total"].astype(float).sum()
+        m4.metric("Ventas (confirmadas+completadas)", f"${ventas:,.2f}")
+
+        st.dataframe(df_hist, use_container_width=True)
+        st.download_button(
+            "⬇️ Descargar historial filtrado (CSV)",
+            df_hist.to_csv(index=False).encode("utf-8"),
+            file_name="historial_reservas.csv", mime="text/csv"
+        )
+
 # ============================================================
 # TAB: FACTURACIÓN (cerrar un servicio ya confirmado)
 # ============================================================
 with tab_facturacion:
     st.subheader("🧾 Facturar y cerrar un servicio")
+
+    modo_factura = st.radio(
+        "¿Qué vas a facturar?",
+        ["Una reserva confirmada del sitio", "Un servicio aparte (factura libre)"],
+        horizontal=True
+    )
+    st.divider()
+
+if modo_factura == "Una reserva confirmada del sitio":
+  with tab_facturacion:
     st.caption(
         "Elige una reserva ya CONFIRMADA, agrega cargos extra si los hubo, y genera el "
         "comprobante final (PDF o texto para WhatsApp). Al cerrarla, la reserva pasa a "
@@ -269,196 +494,35 @@ with tab_facturacion:
         col_r3.metric("Saldo a cobrar", f"${saldo_final:.2f}")
 
         fecha_comprobante = datetime.now().strftime("%d/%m/%Y %H:%M")
-        extra_linea = "Cargos extra"
-        if nuevo_motivo_extra:
-            extra_linea += f" ({nuevo_motivo_extra})"
-        texto_comprobante = f"""COMPROBANTE DE SERVICIO — MitaToya Tours & Taxi Ometepe
-Fecha de emisión: {fecha_comprobante}
-Reserva #{int(r['id'])}
-
-Cliente: {r['nombre']}
-Cédula/Pasaporte: {r.get('documento') or '—'}
-WhatsApp: {r.get('telefono') or '—'}
-
-Servicio: {servicio_txt}
-Fecha(s): {rango_fechas_txt}
-Personas: {r.get('cantidad', 1)}   Niños: {r.get('ninos', 0)}   Mascotas: {r.get('mascotas', 0)}
-
-Total del servicio:       ${total_original:.2f}
-{extra_linea}: ${nuevo_cargo_extra:.2f}
---------------------------------------------
-TOTAL FINAL:               ${total_final:.2f}
-Depósito ya pagado:       -${deposito_pagado:.2f}
---------------------------------------------
-SALDO A COBRAR:            ${saldo_final:.2f}
-
-¡Gracias por viajar con nosotros!
-"""
-        st.text_area(
-            "Texto del comprobante (para copiar y enviar por WhatsApp)",
-            texto_comprobante, height=320, key="fact_texto"
+        detalle_txt = (
+            f"Personas: {r.get('cantidad', 1)}   Ninos: {r.get('ninos', 0)}   "
+            f"Mascotas: {r.get('mascotas', 0)}"
         )
 
-        # --- PDF ---
-        INK = (31, 45, 44)
-        LAVA = (193, 80, 46)
-        GOLD = (232, 163, 61)
-        LAKE = (31, 111, 122)
-        GRIS = (110, 110, 110)
-
-        pdf_bytes = None
+        pdf_bytes, texto_comprobante = None, ""
         try:
-            from fpdf import FPDF
-            pdf = FPDF(format="A4", unit="mm")
-            pdf.set_auto_page_break(True, margin=18)
-            pdf.add_page()
-            page_w = pdf.w
-            margin = 15
-
-            # --- Marca de agua: el logo, grande y muy tenue, detrás de todo ---
-            try:
-                logo_img = logo_mitatoya()
-            except Exception:
-                logo_img = None
-            try:
-                if logo_img is not None:
-                    wm_img = logo_marca_agua()
-                    wm_w = 120
-                    wm_h = wm_w * wm_img.height / wm_img.width
-                    pdf.image(wm_img, x=(page_w - wm_w) / 2, y=90, w=wm_w)
-            except Exception:
-                pass
-
-            # --- Encabezado con banda de color de marca ---
-            pdf.set_fill_color(*INK)
-            pdf.rect(0, 0, page_w, 30, style="F")
-            if logo_img is not None:
-                try:
-                    pdf.image(logo_img, x=margin, y=5, h=20)
-                except Exception:
-                    pass
-            pdf.set_xy(margin + 22, 7)
-            pdf.set_text_color(255, 255, 255)
-            pdf.set_font("Helvetica", "B", 16)
-            pdf.cell(0, 8, "MitaToya Tours & Taxi Ometepe", ln=True)
-            pdf.set_x(margin + 22)
-            pdf.set_font("Helvetica", "", 9.5)
-            pdf.cell(0, 6, "Isla de Ometepe, Nicaragua", ln=True)
-            pdf.set_text_color(0, 0, 0)
-            pdf.set_y(36)
-
-            # --- Título del documento ---
-            pdf.set_font("Helvetica", "B", 15)
-            pdf.set_text_color(*INK)
-            pdf.cell(0, 8, "COMPROBANTE DE SERVICIO", ln=True)
-            pdf.set_draw_color(*GOLD)
-            pdf.set_line_width(0.8)
-            y_linea = pdf.get_y() + 1
-            pdf.line(margin, y_linea, page_w - margin, y_linea)
-            pdf.ln(5)
-
-            pdf.set_font("Helvetica", "", 10)
-            pdf.set_text_color(*GRIS)
-            pdf.cell(0, 6, pdf_safe(f"Reserva #{int(r['id'])}    ·    Emitido: {fecha_comprobante}"), ln=True)
-            pdf.set_text_color(0, 0, 0)
-            pdf.ln(3)
-
-            def titulo_seccion(txt):
-                pdf.set_font("Helvetica", "B", 11.5)
-                pdf.set_text_color(*LAKE)
-                pdf.cell(0, 8, txt, ln=True)
-                pdf.set_draw_color(220, 220, 220)
-                pdf.set_line_width(0.2)
-                y = pdf.get_y()
-                pdf.line(margin, y, page_w - margin, y)
-                pdf.set_text_color(0, 0, 0)
-                pdf.set_font("Helvetica", "", 10.5)
-                pdf.ln(2)
-
-            # --- Datos del cliente ---
-            titulo_seccion("Datos del cliente")
-            pdf.cell(0, 6.5, pdf_safe(f"Nombre: {r['nombre']}"), ln=True)
-            pdf.cell(0, 6.5, pdf_safe(f"Cedula/Pasaporte: {r.get('documento') or '-'}"), ln=True)
-            pdf.cell(0, 6.5, pdf_safe(f"WhatsApp: {r.get('telefono') or '-'}"), ln=True)
-            pdf.ln(3)
-
-            # --- Servicio ---
-            titulo_seccion("Servicio")
-            pdf.cell(0, 6.5, pdf_safe(f"Tipo: {servicio_txt}"), ln=True)
-            pdf.cell(0, 6.5, pdf_safe(f"Fecha(s): {rango_fechas_txt}"), ln=True)
-            pdf.cell(
-                0, 6.5,
-                pdf_safe(
-                    f"Personas: {r.get('cantidad', 1)}   Ninos: {r.get('ninos', 0)}   "
-                    f"Mascotas: {r.get('mascotas', 0)}"
-                ), ln=True
+            pdf_bytes, texto_comprobante, _, _ = generar_pdf_comprobante(
+                referencia=f"Reserva #{int(r['id'])}",
+                cliente=r['nombre'], documento=r.get('documento'), telefono=r.get('telefono'),
+                servicio_txt=servicio_txt, fechas_txt=rango_fechas_txt, detalle_txt=detalle_txt,
+                total_original=total_original, cargo_extra=nuevo_cargo_extra,
+                motivo_extra=nuevo_motivo_extra, deposito_pagado=deposito_pagado,
+                fecha_comprobante=fecha_comprobante
             )
-            pdf.ln(3)
-
-            # --- Totales, como tabla ---
-            titulo_seccion("Totales")
-            col1, col2 = 130, page_w - 2 * margin - 130
-
-            def fila_total(label, valor, negrita=False, resaltado=False):
-                pdf.set_font("Helvetica", "B" if negrita else "", 10.5)
-                if resaltado:
-                    pdf.set_fill_color(*GOLD)
-                    pdf.set_text_color(*INK)
-                    pdf.cell(col1, 8, pdf_safe(label), border=0, fill=True)
-                    pdf.cell(col2, 8, pdf_safe(valor), border=0, fill=True, align="R", ln=True)
-                    pdf.set_text_color(0, 0, 0)
-                else:
-                    pdf.cell(col1, 8, pdf_safe(label), border="B")
-                    pdf.cell(col2, 8, pdf_safe(valor), border="B", align="R", ln=True)
-
-            fila_total("Total del servicio", f"${total_original:.2f}")
-            fila_total(extra_linea, f"${nuevo_cargo_extra:.2f}")
-            fila_total("TOTAL FINAL", f"${total_final:.2f}", negrita=True)
-            fila_total("Deposito ya pagado", f"-${deposito_pagado:.2f}")
-            pdf.ln(2)
-            fila_total("SALDO A COBRAR", f"${saldo_final:.2f}", negrita=True, resaltado=True)
-            pdf.ln(8)
-
-            # --- Términos y condiciones ---
-            pdf.set_font("Helvetica", "B", 10)
-            pdf.set_text_color(*GRIS)
-            pdf.cell(0, 6, "Terminos y condiciones", ln=True)
-            pdf.set_font("Helvetica", "", 8)
-            terminos = [
-                "1. El deposito confirma la reserva y no es reembolsable ante cancelacion por parte del cliente.",
-                "2. Este comprobante certifica que el servicio fue prestado y facturado en su totalidad.",
-                "3. Los cargos extra (danos, servicios fuera de lo pactado, etc.) forman parte del saldo a cobrar.",
-                "4. El saldo pendiente se cancela al momento de la entrega de este comprobante, salvo acuerdo distinto.",
-                "5. MitaToya Tours & Taxi Ometepe no se hace responsable por objetos personales olvidados en "
-                "vehiculos o habitaciones.",
-                "6. Reclamos sobre este comprobante: contactar por WhatsApp dentro de las 48 horas de su emision.",
-            ]
-            for linea in terminos:
-                pdf.multi_cell(0, 4.3, pdf_safe(linea), new_x="LMARGIN", new_y="NEXT")
-            pdf.set_text_color(0, 0, 0)
-            pdf.ln(4)
-
-            pdf.set_draw_color(*GOLD)
-            pdf.set_line_width(0.5)
-            y_pie = pdf.get_y()
-            pdf.line(margin, y_pie, page_w - margin, y_pie)
-            pdf.ln(3)
-            pdf.set_font("Helvetica", "I", 9.5)
-            pdf.set_text_color(*LAKE)
-            pdf.cell(0, 6, "Gracias por viajar con nosotros - MitaToya Tours & Taxi Ometepe", ln=True, align="C")
-
-            pdf_bytes = bytes(pdf.output())
         except ImportError:
             st.warning(
                 "Para descargar el comprobante en PDF, agrega `fpdf2` a tu requirements.txt "
-                "(`pip install fpdf2`) y reinicia la app. Mientras tanto, usa el texto de arriba "
-                "para enviarlo por WhatsApp."
+                "(`pip install fpdf2`) y reinicia la app."
             )
         except Exception as e:
-            st.warning(
-                "No se pudo generar el PDF de este comprobante (usa el texto de arriba mientras "
-                f"lo revisamos). Detalle técnico: {e}"
+            st.warning(f"No se pudo generar el PDF de este comprobante. Detalle técnico: {e}")
+
+        if texto_comprobante:
+            st.text_area(
+                "Texto del comprobante (para copiar y enviar por WhatsApp)",
+                texto_comprobante, height=320, key="fact_texto"
             )
+
 
         col_d1, col_d2 = st.columns(2)
         if pdf_bytes:
@@ -487,6 +551,75 @@ SALDO A COBRAR:            ${saldo_final:.2f}
             }).eq("id", reserva_id_fact).execute()
             st.success("Servicio cerrado y comprobante listo. La reserva ahora aparece como 'completada'.")
             st.rerun()
+
+else:
+  with tab_facturacion:
+    st.caption(
+        "Para un servicio que no vino del formulario del sitio — escribe tú mismo los datos "
+        "del cliente y el costo, y genera el comprobante en PDF igual que con una reserva."
+    )
+
+    col_l1, col_l2 = st.columns(2)
+    with col_l1:
+        lib_cliente = st.text_input("Nombre del cliente", key="lib_cliente")
+        lib_documento = st.text_input("Cédula/Pasaporte (opcional)", key="lib_documento")
+        lib_telefono = st.text_input("WhatsApp (opcional)", key="lib_telefono", placeholder="+505 ...")
+    with col_l2:
+        lib_servicio = st.text_input("Servicio", key="lib_servicio", placeholder="Ej: Tour privado a Charco Verde")
+        lib_fechas = st.text_input("Fecha(s)", key="lib_fechas", placeholder="Ej: 15/08/2026")
+        lib_detalle = st.text_area("Detalle adicional (opcional)", key="lib_detalle", placeholder="Ej: 4 personas, incluye almuerzo")
+
+    col_l3, col_l4 = st.columns(2)
+    lib_total = col_l3.number_input("Costo del servicio (USD)", min_value=0.0, step=1.0, key="lib_total")
+    lib_deposito = col_l4.number_input("Depósito ya pagado (USD)", min_value=0.0, step=1.0, key="lib_deposito")
+    col_l5, col_l6 = st.columns(2)
+    lib_cargo_extra = col_l5.number_input("Cargo extra (opcional, USD)", min_value=0.0, step=1.0, key="lib_cargo_extra")
+    lib_motivo_extra = col_l6.text_input("Motivo del cargo extra", key="lib_motivo_extra")
+
+    if lib_cliente and lib_servicio:
+        st.divider()
+        fecha_comprobante_lib = datetime.now().strftime("%d/%m/%Y %H:%M")
+        referencia_lib = f"Servicio libre — {fecha_comprobante_lib}"
+
+        pdf_bytes_lib, texto_comprobante_lib = None, ""
+        try:
+            pdf_bytes_lib, texto_comprobante_lib, total_final_lib, saldo_final_lib = generar_pdf_comprobante(
+                referencia=referencia_lib,
+                cliente=lib_cliente, documento=lib_documento, telefono=lib_telefono,
+                servicio_txt=lib_servicio, fechas_txt=lib_fechas or "-", detalle_txt=lib_detalle or "",
+                total_original=lib_total, cargo_extra=lib_cargo_extra,
+                motivo_extra=lib_motivo_extra, deposito_pagado=lib_deposito,
+                fecha_comprobante=fecha_comprobante_lib
+            )
+            col_rl1, col_rl2, col_rl3 = st.columns(3)
+            col_rl1.metric("Total del servicio", f"${total_final_lib:.2f}")
+            col_rl2.metric("Depósito ya pagado", f"${lib_deposito:.2f}")
+            col_rl3.metric("Saldo a cobrar", f"${saldo_final_lib:.2f}")
+        except ImportError:
+            st.warning("Agrega `fpdf2` a tu requirements.txt para poder generar el PDF.")
+        except Exception as e:
+            st.warning(f"No se pudo generar el PDF. Detalle técnico: {e}")
+
+        if texto_comprobante_lib:
+            st.text_area(
+                "Texto del comprobante (para copiar y enviar por WhatsApp)",
+                texto_comprobante_lib, height=280, key="lib_texto"
+            )
+            col_dl1, col_dl2 = st.columns(2)
+            if pdf_bytes_lib:
+                nombre_archivo = "".join(c for c in lib_cliente if c.isalnum() or c == " ").strip().replace(" ", "_") or "cliente"
+                col_dl1.download_button(
+                    "⬇️ Descargar comprobante (PDF)", data=pdf_bytes_lib,
+                    file_name=f"comprobante_{nombre_archivo}.pdf", mime="application/pdf",
+                    use_container_width=True
+                )
+            tel_limpio_lib = "".join(ch for ch in str(lib_telefono or "") if ch.isdigit())
+            if tel_limpio_lib:
+                from urllib.parse import quote
+                wa_link_lib = f"https://wa.me/{tel_limpio_lib}?text={quote(texto_comprobante_lib)}"
+                col_dl2.link_button("💬 Enviar por WhatsApp", wa_link_lib, use_container_width=True)
+    else:
+        st.info("Escribe al menos el nombre del cliente y el servicio para generar el comprobante.")
 
 # ============================================================
 # TAB 2: DISPONIBILIDAD (calendario de bloqueos)
